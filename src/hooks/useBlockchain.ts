@@ -1,229 +1,263 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Block,
   Transaction,
   createGenesisBlock,
-  mineBlock,
-  validateBlockchain,
   createTransaction,
-  calculateBlockHash,
+  mineBlock,
+  calculateHash,
+  recalculateValidity,
 } from '@/lib/blockchain';
 
-export type ExplanationEvent = 
-  | { type: 'genesis'; message: string }
-  | { type: 'transaction_added'; message: string }
-  | { type: 'mining_started'; message: string }
-  | { type: 'mining_progress'; message: string; nonce: number; hash: string }
-  | { type: 'mining_complete'; message: string }
-  | { type: 'block_tampered'; message: string }
-  | { type: 'chain_validated'; message: string }
-  | { type: 'chain_invalid'; message: string };
+export interface MiningState {
+  isMining: boolean;
+  currentNonce: number;
+  currentHash: string;
+  progress: number;
+}
 
 export function useBlockchain() {
-  const [chain, setChain] = useState<Block[]>([]);
-  const [mempool, setMempool] = useState<Transaction[]>([]);
+  const [blocks, setBlocks] = useState<Block[]>([]);
+  const [pendingTransactions, setPendingTransactions] = useState<Transaction[]>([]);
   const [difficulty, setDifficulty] = useState(2);
-  const [isMining, setIsMining] = useState(false);
-  const [miningProgress, setMiningProgress] = useState({ nonce: 0, hash: '' });
-  const [lastEvent, setLastEvent] = useState<ExplanationEvent | null>(null);
+  const [miningState, setMiningState] = useState<MiningState>({
+    isMining: false,
+    currentNonce: 0,
+    currentHash: '',
+    progress: 0,
+  });
+  
   const abortControllerRef = useRef<AbortController | null>(null);
-
+  
   // Initialize blockchain with genesis block
   useEffect(() => {
-    const initChain = async () => {
+    const initBlockchain = async () => {
       const genesis = await createGenesisBlock();
-      setChain([genesis]);
-      setLastEvent({
-        type: 'genesis',
-        message: 'Genesis block created! This is the first block in the chain with no previous hash.',
-      });
+      setBlocks([genesis]);
     };
-    initChain();
+    initBlockchain();
   }, []);
-
+  
   // Add transaction to mempool
   const addTransaction = useCallback((sender: string, receiver: string, amount: number) => {
     const tx = createTransaction(sender, receiver, amount);
-    setMempool(prev => [...prev, tx]);
-    setLastEvent({
-      type: 'transaction_added',
-      message: `Transaction added to mempool: ${sender} → ${receiver} (${amount} coins). Waiting to be mined.`,
-    });
+    setPendingTransactions(prev => [...prev, tx]);
+    return tx;
   }, []);
-
-  // Mine new block
-  const mine = useCallback(async () => {
-    if (chain.length === 0 || mempool.length === 0 || isMining) return;
-
-    setIsMining(true);
-    abortControllerRef.current = new AbortController();
-
-    setLastEvent({
-      type: 'mining_started',
-      message: `Mining started! Finding a hash with ${difficulty} leading zeros...`,
-    });
-
-    const lastBlock = chain[chain.length - 1];
-    const newBlockData = {
+  
+  // Remove transaction from mempool
+  const removeTransaction = useCallback((id: string) => {
+    setPendingTransactions(prev => prev.filter(tx => tx.id !== id));
+  }, []);
+  
+  // Mine a new block
+  const mineNewBlock = useCallback(async () => {
+    if (blocks.length === 0 || miningState.isMining) return;
+    
+    const lastBlock = blocks[blocks.length - 1];
+    const transactionsToMine = pendingTransactions.slice(0, 5); // Max 5 transactions per block
+    
+    const newBlock: Omit<Block, 'hash' | 'isValid' | 'nonce'> = {
       index: lastBlock.index + 1,
       timestamp: Date.now(),
-      transactions: [...mempool],
+      transactions: transactionsToMine,
       previousHash: lastBlock.hash,
-      nonce: 0,
     };
-
+    
+    abortControllerRef.current = new AbortController();
+    
+    setMiningState({
+      isMining: true,
+      currentNonce: 0,
+      currentHash: '',
+      progress: 0,
+    });
+    
     try {
-      const minedBlock = await mineBlock(
-        newBlockData,
+      const { nonce, hash } = await mineBlock(
+        newBlock,
         difficulty,
         (nonce, hash) => {
-          setMiningProgress({ nonce, hash });
-          if (nonce % 500 === 0) {
-            setLastEvent({
-              type: 'mining_progress',
-              message: `Trying nonce ${nonce}... Hash doesn't start with ${'0'.repeat(difficulty)} yet.`,
-              nonce,
-              hash,
-            });
-          }
+          setMiningState(prev => ({
+            ...prev,
+            currentNonce: nonce,
+            currentHash: hash,
+            progress: Math.min((nonce / (Math.pow(16, difficulty) * 0.5)) * 100, 95),
+          }));
         },
         abortControllerRef.current.signal
       );
-
-      setChain(prev => [...prev, minedBlock]);
-      setMempool([]);
-      setLastEvent({
-        type: 'mining_complete',
-        message: `Block #${minedBlock.index} mined! Found valid hash after ${minedBlock.nonce} attempts.`,
-      });
-    } catch (error) {
-      if ((error as Error).message !== 'Mining aborted') {
-        console.error('Mining error:', error);
-      }
-    } finally {
-      setIsMining(false);
-      setMiningProgress({ nonce: 0, hash: '' });
-    }
-  }, [chain, mempool, difficulty, isMining]);
-
-  // Stop mining
-  const stopMining = useCallback(() => {
-    abortControllerRef.current?.abort();
-    setIsMining(false);
-  }, []);
-
-  // Tamper with a block
-  const tamperBlock = useCallback(async (blockIndex: number, newTransactions: Transaction[]) => {
-    setChain(prev => {
-      const newChain = [...prev];
-      newChain[blockIndex] = {
-        ...newChain[blockIndex],
-        transactions: newTransactions,
+      
+      const minedBlock: Block = {
+        ...newBlock,
+        nonce,
+        hash,
+        isValid: true,
       };
-      return newChain;
+      
+      setBlocks(prev => [...prev, minedBlock]);
+      setPendingTransactions(prev => prev.filter(tx => !transactionsToMine.find(t => t.id === tx.id)));
+      
+      setMiningState({
+        isMining: false,
+        currentNonce: nonce,
+        currentHash: hash,
+        progress: 100,
+      });
+      
+      return minedBlock;
+    } catch (error) {
+      setMiningState({
+        isMining: false,
+        currentNonce: 0,
+        currentHash: '',
+        progress: 0,
+      });
+      throw error;
+    }
+  }, [blocks, pendingTransactions, difficulty, miningState.isMining]);
+  
+  // Cancel mining
+  const cancelMining = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setMiningState({
+      isMining: false,
+      currentNonce: 0,
+      currentHash: '',
+      progress: 0,
     });
-
-    setLastEvent({
-      type: 'block_tampered',
-      message: `Block #${blockIndex} was modified! The hash no longer matches the data. Chain integrity compromised!`,
+  }, []);
+  
+  // Tamper with a block (for demonstration)
+  const tamperBlock = useCallback(async (index: number, newData: Partial<Block>) => {
+    setBlocks(prev => {
+      const updated = prev.map((block, i) => {
+        if (i === index) {
+          return { ...block, ...newData };
+        }
+        return block;
+      });
+      return updated;
     });
-
-    // Validate chain after tampering
+    
+    // Recalculate validity after state update
     setTimeout(async () => {
-      setChain(prev => {
-        validateBlockchain(prev).then(validated => {
-          setChain(validated);
-          const invalidBlocks = validated.filter(b => !b.isValid);
-          if (invalidBlocks.length > 0) {
-            setLastEvent({
-              type: 'chain_invalid',
-              message: `Chain validation failed! ${invalidBlocks.length} block(s) are now invalid due to hash mismatch.`,
-            });
-          }
+      setBlocks(prev => {
+        recalculateValidity(prev).then(validated => {
+          setBlocks(validated);
         });
         return prev;
       });
     }, 100);
   }, []);
-
-  // Re-mine a tampered block
-  const remineBlock = useCallback(async (blockIndex: number) => {
-    if (isMining) return;
-
-    setIsMining(true);
+  
+  // Re-mine a specific block
+  const remineBlock = useCallback(async (index: number) => {
+    if (index === 0 || miningState.isMining) return;
+    
+    const block = blocks[index];
+    const previousBlock = blocks[index - 1];
+    
+    const blockToMine: Omit<Block, 'hash' | 'isValid' | 'nonce'> = {
+      index: block.index,
+      timestamp: block.timestamp,
+      transactions: block.transactions,
+      previousHash: previousBlock.hash,
+    };
+    
     abortControllerRef.current = new AbortController();
-
-    const block = chain[blockIndex];
-    const previousHash = blockIndex === 0 ? '0'.repeat(64) : chain[blockIndex - 1].hash;
-
+    
+    setMiningState({
+      isMining: true,
+      currentNonce: 0,
+      currentHash: '',
+      progress: 0,
+    });
+    
     try {
-      const reminedBlock = await mineBlock(
-        {
-          index: block.index,
-          timestamp: block.timestamp,
-          transactions: block.transactions,
-          previousHash,
-          nonce: 0,
-        },
+      const { nonce, hash } = await mineBlock(
+        blockToMine,
         difficulty,
-        (nonce, hash) => setMiningProgress({ nonce, hash }),
+        (nonce, hash) => {
+          setMiningState(prev => ({
+            ...prev,
+            currentNonce: nonce,
+            currentHash: hash,
+            progress: Math.min((nonce / (Math.pow(16, difficulty) * 0.5)) * 100, 95),
+          }));
+        },
         abortControllerRef.current.signal
       );
-
-      // Update this block and revalidate chain
-      setChain(prev => {
-        const newChain = [...prev];
-        newChain[blockIndex] = reminedBlock;
-        
-        // Need to update subsequent blocks too
-        validateBlockchain(newChain).then(validated => {
-          setChain(validated);
-        });
-        
-        return newChain;
-      });
-
-      setLastEvent({
-        type: 'mining_complete',
-        message: `Block #${blockIndex} re-mined successfully! Note: Subsequent blocks may still need re-mining.`,
+      
+      // Update this block and recalculate all following blocks
+      const newBlocks = [...blocks];
+      newBlocks[index] = {
+        ...blockToMine,
+        nonce,
+        hash,
+        isValid: true,
+        previousHash: previousBlock.hash,
+      };
+      
+      // Invalidate all following blocks (they need to be re-mined too)
+      for (let i = index + 1; i < newBlocks.length; i++) {
+        newBlocks[i] = {
+          ...newBlocks[i],
+          previousHash: newBlocks[i - 1].hash,
+          isValid: false,
+        };
+      }
+      
+      const validated = await recalculateValidity(newBlocks);
+      setBlocks(validated);
+      
+      setMiningState({
+        isMining: false,
+        currentNonce: nonce,
+        currentHash: hash,
+        progress: 100,
       });
     } catch (error) {
-      if ((error as Error).message !== 'Mining aborted') {
-        console.error('Re-mining error:', error);
-      }
-    } finally {
-      setIsMining(false);
-      setMiningProgress({ nonce: 0, hash: '' });
+      setMiningState({
+        isMining: false,
+        currentNonce: 0,
+        currentHash: '',
+        progress: 0,
+      });
     }
-  }, [chain, difficulty, isMining]);
-
-  // Revalidate chain
-  const revalidateChain = useCallback(async () => {
-    const validated = await validateBlockchain(chain);
-    setChain(validated);
-    
-    const allValid = validated.every(b => b.isValid);
-    setLastEvent({
-      type: allValid ? 'chain_validated' : 'chain_invalid',
-      message: allValid 
-        ? 'Chain validated! All blocks have correct hashes and links.'
-        : 'Chain validation failed! Some blocks have invalid hashes or links.',
-    });
-  }, [chain]);
-
+  }, [blocks, difficulty, miningState.isMining]);
+  
+  // Validate chain
+  const validateChain = useCallback(async () => {
+    const validated = await recalculateValidity(blocks);
+    setBlocks(validated);
+    return validated.every(b => b.isValid);
+  }, [blocks]);
+  
+  // Reset blockchain
+  const resetBlockchain = useCallback(async () => {
+    cancelMining();
+    const genesis = await createGenesisBlock();
+    setBlocks([genesis]);
+    setPendingTransactions([]);
+  }, [cancelMining]);
+  
   return {
-    chain,
-    mempool,
+    blocks,
+    pendingTransactions,
     difficulty,
+    miningState,
     setDifficulty,
-    isMining,
-    miningProgress,
-    lastEvent,
     addTransaction,
-    mine,
-    stopMining,
+    removeTransaction,
+    mineNewBlock,
+    cancelMining,
     tamperBlock,
     remineBlock,
-    revalidateChain,
+    validateChain,
+    resetBlockchain,
   };
 }

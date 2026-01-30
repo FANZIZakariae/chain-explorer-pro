@@ -1,37 +1,34 @@
 import { cn } from '@/lib/utils';
+import { ArrowRight } from 'lucide-react';
 
 interface ChainConnectorProps {
   isValid: boolean;
+  className?: string;
 }
 
-export function ChainConnector({ isValid }: ChainConnectorProps) {
+export function ChainConnector({ isValid, className }: ChainConnectorProps) {
   return (
-    <div className="flex items-center justify-center px-2">
-      <div className="relative">
-        {/* Main connector line */}
-        <div
-          className={cn(
-            'w-12 h-0.5 transition-colors duration-300',
-            isValid ? 'bg-valid' : 'bg-invalid'
-          )}
-        />
-        {/* Arrow head */}
-        <div
-          className={cn(
-            'absolute right-0 top-1/2 -translate-y-1/2 w-0 h-0',
-            'border-t-[6px] border-t-transparent',
-            'border-b-[6px] border-b-transparent',
-            'border-l-[8px]',
-            isValid ? 'border-l-valid' : 'border-l-invalid'
-          )}
-        />
-        {/* Glow effect */}
-        <div
-          className={cn(
-            'absolute inset-0 blur-sm',
-            isValid ? 'bg-valid/30' : 'bg-invalid/30'
-          )}
-        />
+    <div className={cn("flex items-center justify-center w-12 relative", className)}>
+      {/* Connection line */}
+      <div 
+        className={cn(
+          "absolute inset-y-[45%] left-0 right-0 h-1 rounded-full transition-colors duration-300",
+          isValid 
+            ? "bg-gradient-to-r from-success/50 to-success/30" 
+            : "bg-gradient-to-r from-destructive/50 to-destructive/30"
+        )}
+      />
+      
+      {/* Arrow icon */}
+      <div 
+        className={cn(
+          "relative z-10 w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300",
+          isValid 
+            ? "bg-success/20 text-success" 
+            : "bg-destructive/20 text-destructive"
+        )}
+      >
+        <ArrowRight className="w-3 h-3" />
       </div>
     </div>
   );

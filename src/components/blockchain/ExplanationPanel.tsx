@@ -1,102 +1,125 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ExplanationEvent } from '@/hooks/useBlockchain';
-import { Info, CheckCircle, AlertTriangle, Pickaxe, Send, Blocks } from 'lucide-react';
+import { Block } from '@/lib/blockchain';
+import { MiningState } from '@/hooks/useBlockchain';
+import { BookOpen, Lightbulb, AlertTriangle, CheckCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ExplanationPanelProps {
-  event: ExplanationEvent | null;
+  blocks: Block[];
+  miningState: MiningState;
+  lastAction?: 'mined' | 'tampered' | 'remined' | 'transaction' | null;
+  className?: string;
 }
 
-const eventIcons = {
-  genesis: Blocks,
-  transaction_added: Send,
-  mining_started: Pickaxe,
-  mining_progress: Pickaxe,
-  mining_complete: CheckCircle,
-  block_tampered: AlertTriangle,
-  chain_validated: CheckCircle,
-  chain_invalid: AlertTriangle,
-};
-
-const eventColors = {
-  genesis: 'text-primary',
-  transaction_added: 'text-hash',
-  mining_started: 'text-mining',
-  mining_progress: 'text-mining',
-  mining_complete: 'text-valid',
-  block_tampered: 'text-invalid',
-  chain_validated: 'text-valid',
-  chain_invalid: 'text-invalid',
-};
-
-export function ExplanationPanel({ event }: ExplanationPanelProps) {
-  if (!event) {
-    return (
-      <Card className="glass-card">
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Info className="h-5 w-5 text-primary" />
-            What's Happening
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Create transactions and mine blocks to see explanations here.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const Icon = eventIcons[event.type];
-  const colorClass = eventColors[event.type];
-
-  return (
-    <Card className="glass-card">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <Info className="h-5 w-5 text-primary" />
-          What's Happening
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className={cn('flex items-start gap-3 p-3 rounded-lg bg-background/50 animate-fade-in')}>
-          <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', colorClass)} />
-          <div className="space-y-1">
-            <p className="text-sm">{event.message}</p>
-            {event.type === 'mining_progress' && (
-              <div className="text-xs text-muted-foreground space-y-1">
-                <p>Current nonce: {event.nonce}</p>
-                <p className="hash-text truncate">Hash: {event.hash}</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Educational tooltips based on event type */}
-        <div className="mt-4 pt-4 border-t border-border/50">
-          <h4 className="text-xs font-semibold text-muted-foreground mb-2">
-            💡 Did you know?
-          </h4>
-          <p className="text-xs text-muted-foreground">
-            {getEducationalTip(event.type)}
-          </p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function getEducationalTip(eventType: ExplanationEvent['type']): string {
-  const tips: Record<ExplanationEvent['type'], string> = {
-    genesis: 'The genesis block is special because it has no previous block to reference. Its previous hash is set to all zeros.',
-    transaction_added: 'Transactions wait in the mempool until a miner includes them in a block. In real blockchains, miners prioritize transactions with higher fees.',
-    mining_started: 'Mining is the process of finding a valid hash by trying different nonce values. This is called Proof-of-Work.',
-    mining_progress: 'Each nonce attempt produces a completely different hash due to the avalanche effect of SHA-256. Even a tiny change in input creates a drastically different output.',
-    mining_complete: 'Once a valid hash is found, the block is added to the chain. In Bitcoin, this happens roughly every 10 minutes.',
-    block_tampered: 'Changing any data in a block changes its hash, which breaks the link to the next block. This is why blockchains are considered tamper-proof.',
-    chain_validated: 'Blockchain validation checks that each block\'s hash matches its data and that the chain of previous hashes is unbroken.',
-    chain_invalid: 'An invalid chain means someone tried to modify historical data. In real blockchains, nodes would reject this invalid chain.',
+export function ExplanationPanel({
+  blocks,
+  miningState,
+  lastAction,
+  className,
+}: ExplanationPanelProps) {
+  const hasInvalidBlocks = blocks.some(b => !b.isValid);
+  const invalidCount = blocks.filter(b => !b.isValid).length;
+  
+  const getExplanation = () => {
+    if (miningState.isMining) {
+      return {
+        icon: Lightbulb,
+        title: 'Mining in Progress',
+        content: `The miner is trying different nonce values to find a hash that starts with ${miningState.currentNonce > 0 ? '"0".repeat(difficulty)' : 'the required zeros'}. 
+        Each attempt changes the nonce, which completely changes the hash output due to the avalanche effect of SHA-256.
+        Current attempt: nonce #${miningState.currentNonce.toLocaleString()}`,
+        type: 'info' as const,
+      };
+    }
+    
+    if (hasInvalidBlocks) {
+      return {
+        icon: AlertTriangle,
+        title: 'Chain Integrity Broken!',
+        content: `${invalidCount} block${invalidCount > 1 ? 's are' : ' is'} now invalid. 
+        When a block is modified, its hash changes. Since each block contains the previous block's hash, 
+        all subsequent blocks become invalid—they're pointing to a hash that no longer exists!
+        Click "Re-mine" on invalid blocks to fix the chain (you'll need to re-mine all following blocks too).`,
+        type: 'warning' as const,
+      };
+    }
+    
+    if (lastAction === 'mined') {
+      return {
+        icon: CheckCircle,
+        title: 'Block Successfully Mined!',
+        content: `A valid hash was found! The new block is now cryptographically linked to the previous block 
+        through its "previous hash" field. This chain of hashes is what makes blockchain immutable—
+        changing any block would break all the links after it.`,
+        type: 'success' as const,
+      };
+    }
+    
+    if (lastAction === 'transaction') {
+      return {
+        icon: Lightbulb,
+        title: 'Transaction Added',
+        content: `Your transaction is now in the mempool (pending transactions). 
+        When a new block is mined, pending transactions will be included in that block 
+        and become a permanent part of the blockchain.`,
+        type: 'info' as const,
+      };
+    }
+    
+    return {
+      icon: BookOpen,
+      title: 'How Blockchain Works',
+      content: `This simulator demonstrates the core concepts of blockchain technology:
+      
+      • Blocks contain transactions and are linked via cryptographic hashes
+      • Each block references the previous block's hash, creating a chain
+      • Mining uses Proof-of-Work to find a valid nonce
+      • Tampering with any block invalidates all subsequent blocks
+      
+      Try adding transactions and mining a block!`,
+      type: 'default' as const,
+    };
   };
-  return tips[eventType];
+  
+  const explanation = getExplanation();
+  const Icon = explanation.icon;
+  
+  const typeStyles = {
+    default: 'border-border/50 bg-secondary/20',
+    info: 'border-primary/30 bg-primary/5',
+    warning: 'border-destructive/30 bg-destructive/5',
+    success: 'border-success/30 bg-success/5',
+  };
+  
+  const iconStyles = {
+    default: 'text-muted-foreground',
+    info: 'text-primary',
+    warning: 'text-destructive',
+    success: 'text-success',
+  };
+  
+  return (
+    <div className={cn("glass-card p-6", className)}>
+      <div className="flex items-start gap-4">
+        <div className={cn(
+          "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
+          typeStyles[explanation.type]
+        )}>
+          <Icon className={cn("w-5 h-5", iconStyles[explanation.type])} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className={cn(
+            "font-semibold mb-2",
+            explanation.type === 'warning' && 'text-destructive',
+            explanation.type === 'success' && 'text-success',
+            explanation.type === 'info' && 'text-primary'
+          )}>
+            {explanation.title}
+          </h3>
+          <p className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed">
+            {explanation.content}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }

@@ -1,5 +1,8 @@
-import { useState } from 'react';
-import { Block, Transaction } from '@/lib/blockchain';
+import { useState, useEffect } from 'react';
+import { Block } from '@/lib/blockchain';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -8,113 +11,117 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { AlertTriangle } from 'lucide-react';
 
 interface TamperDialogProps {
   block: Block | null;
+  isOpen: boolean;
   onClose: () => void;
-  onSubmit: (transactions: Transaction[]) => void;
+  onConfirm: (index: number, changes: Partial<Block>) => void;
 }
 
-export function TamperDialog({ block, onClose, onSubmit }: TamperDialogProps) {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-
-  const handleOpen = (open: boolean) => {
-    if (!open) {
-      onClose();
-    } else if (block) {
-      setTransactions([...block.transactions]);
+export function TamperDialog({ block, isOpen, onClose, onConfirm }: TamperDialogProps) {
+  const [tamperedData, setTamperedData] = useState('');
+  
+  useEffect(() => {
+    if (block && block.transactions.length > 0) {
+      setTamperedData(JSON.stringify(block.transactions[0], null, 2));
+    } else {
+      setTamperedData('');
     }
+  }, [block]);
+  
+  const handleConfirm = () => {
+    if (!block) return;
+    
+    try {
+      // Parse and modify the first transaction
+      const modifiedTx = JSON.parse(tamperedData);
+      const newTransactions = [...block.transactions];
+      if (newTransactions.length > 0) {
+        newTransactions[0] = { ...newTransactions[0], ...modifiedTx };
+      }
+      onConfirm(block.index, { transactions: newTransactions });
+    } catch {
+      // If parsing fails, just modify the nonce as a simple tampering demo
+      onConfirm(block.index, { nonce: block.nonce + 1 });
+    }
+    onClose();
   };
-
-  const updateTransaction = (index: number, field: keyof Transaction, value: string | number) => {
-    setTransactions(prev => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], [field]: value };
-      return updated;
-    });
+  
+  const handleQuickTamper = () => {
+    if (!block) return;
+    // Simply increment the nonce to demonstrate tampering
+    onConfirm(block.index, { nonce: block.nonce + 1 });
+    onClose();
   };
-
-  const handleSubmit = () => {
-    onSubmit(transactions);
-  };
-
+  
   return (
-    <Dialog open={block !== null} onOpenChange={handleOpen}>
-      <DialogContent className="glass-card border-invalid/30">
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="glass-card border-destructive/30">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-invalid">
-            <AlertTriangle className="h-5 w-5" />
+          <DialogTitle className="flex items-center gap-2 text-destructive">
+            <AlertTriangle className="w-5 h-5" />
             Tamper with Block #{block?.index}
           </DialogTitle>
           <DialogDescription>
-            Modify the transaction data. This will invalidate the block's hash
-            and break the chain integrity.
+            Modify block data to see how it breaks the chain integrity.
+            Any change will invalidate this block and all blocks after it.
           </DialogDescription>
         </DialogHeader>
-
-        <div className="space-y-4 max-h-[300px] overflow-y-auto">
-          {transactions.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">
-              No transactions to modify
-            </p>
+        
+        <div className="py-4 space-y-4">
+          {block?.transactions && block.transactions.length > 0 ? (
+            <div className="space-y-2">
+              <Label htmlFor="transaction-data">Transaction Data</Label>
+              <textarea
+                id="transaction-data"
+                className="w-full h-32 p-3 rounded-lg bg-secondary/50 border border-border/50 font-mono text-sm resize-none"
+                value={tamperedData}
+                onChange={(e) => setTamperedData(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Try changing the amount or receiver to simulate fraud.
+              </p>
+            </div>
           ) : (
-            transactions.map((tx, index) => (
-              <div key={tx.id} className="space-y-2 p-3 rounded-lg bg-background/50">
-                <div className="text-xs text-muted-foreground">
-                  Transaction {index + 1}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor={`sender-${index}`} className="text-xs">
-                      Sender
-                    </Label>
-                    <Input
-                      id={`sender-${index}`}
-                      value={tx.sender}
-                      onChange={(e) => updateTransaction(index, 'sender', e.target.value)}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor={`receiver-${index}`} className="text-xs">
-                      Receiver
-                    </Label>
-                    <Input
-                      id={`receiver-${index}`}
-                      value={tx.receiver}
-                      onChange={(e) => updateTransaction(index, 'receiver', e.target.value)}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                </div>
+            <div className="text-center py-4">
+              <p className="text-muted-foreground mb-4">
+                This block has no transactions. We'll modify the nonce to demonstrate tampering.
+              </p>
+              <div className="flex items-center justify-center gap-4">
                 <div>
-                  <Label htmlFor={`amount-${index}`} className="text-xs">
-                    Amount
-                  </Label>
-                  <Input
-                    id={`amount-${index}`}
-                    type="number"
-                    value={tx.amount}
-                    onChange={(e) => updateTransaction(index, 'amount', parseFloat(e.target.value) || 0)}
-                    className="h-8 text-sm"
-                  />
+                  <p className="text-xs text-muted-foreground">Current Nonce</p>
+                  <p className="font-mono text-lg nonce-text">{block?.nonce}</p>
+                </div>
+                <span className="text-muted-foreground">→</span>
+                <div>
+                  <p className="text-xs text-muted-foreground">New Nonce</p>
+                  <p className="font-mono text-lg text-destructive">{(block?.nonce ?? 0) + 1}</p>
                 </div>
               </div>
-            ))
+            </div>
           )}
         </div>
-
+        
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="destructive" onClick={handleSubmit}>
-            Tamper Block
-          </Button>
+          {block?.transactions && block.transactions.length > 0 ? (
+            <>
+              <Button variant="outline" onClick={handleQuickTamper}>
+                Quick Tamper (Nonce)
+              </Button>
+              <Button variant="destructive" onClick={handleConfirm}>
+                Apply Changes
+              </Button>
+            </>
+          ) : (
+            <Button variant="destructive" onClick={handleQuickTamper}>
+              Tamper Block
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

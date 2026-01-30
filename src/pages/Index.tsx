@@ -1,66 +1,137 @@
+import { useState, useCallback } from 'react';
+import { useBlockchain } from '@/hooks/useBlockchain';
 import { Header } from '@/components/blockchain/Header';
 import { BlockchainVisualization } from '@/components/blockchain/BlockchainVisualization';
 import { TransactionPanel } from '@/components/blockchain/TransactionPanel';
 import { MiningPanel } from '@/components/blockchain/MiningPanel';
 import { ExplanationPanel } from '@/components/blockchain/ExplanationPanel';
-import { TooltipProvider } from '@/components/ui/tooltip';
-import { useBlockchain } from '@/hooks/useBlockchain';
+import { TamperDialog } from '@/components/blockchain/TamperDialog';
+import { Block } from '@/lib/blockchain';
+
+type LastAction = 'mined' | 'tampered' | 'remined' | 'transaction' | null;
 
 const Index = () => {
   const {
-    chain,
-    mempool,
+    blocks,
+    pendingTransactions,
     difficulty,
+    miningState,
     setDifficulty,
-    isMining,
-    miningProgress,
-    lastEvent,
     addTransaction,
-    mine,
-    stopMining,
+    removeTransaction,
+    mineNewBlock,
+    cancelMining,
     tamperBlock,
     remineBlock,
+    resetBlockchain,
   } = useBlockchain();
-
+  
+  const [tamperTarget, setTamperTarget] = useState<Block | null>(null);
+  const [lastAction, setLastAction] = useState<LastAction>(null);
+  
+  const handleAddTransaction = useCallback((sender: string, receiver: string, amount: number) => {
+    addTransaction(sender, receiver, amount);
+    setLastAction('transaction');
+  }, [addTransaction]);
+  
+  const handleMine = useCallback(async () => {
+    try {
+      await mineNewBlock();
+      setLastAction('mined');
+    } catch (error) {
+      // Mining was cancelled
+    }
+  }, [mineNewBlock]);
+  
+  const handleTamper = useCallback((index: number) => {
+    const block = blocks.find(b => b.index === index);
+    if (block) {
+      setTamperTarget(block);
+    }
+  }, [blocks]);
+  
+  const handleTamperConfirm = useCallback((index: number, changes: Partial<Block>) => {
+    tamperBlock(index, changes);
+    setLastAction('tampered');
+  }, [tamperBlock]);
+  
+  const handleRemine = useCallback(async (index: number) => {
+    await remineBlock(index);
+    setLastAction('remined');
+  }, [remineBlock]);
+  
+  const handleReset = useCallback(() => {
+    resetBlockchain();
+    setLastAction(null);
+  }, [resetBlockchain]);
+  
   return (
-    <TooltipProvider>
-      <div className="min-h-screen bg-background">
-        <Header />
+    <div className="min-h-screen bg-background p-4 md:p-6 lg:p-8">
+      <div className="max-w-[1600px] mx-auto space-y-6">
+        {/* Header */}
+        <Header onReset={handleReset} />
         
-        <main className="container mx-auto px-4 py-6 space-y-6">
-          {/* Blockchain Visualization */}
-          <section>
-            <h2 className="text-lg font-semibold mb-4">Blockchain</h2>
-            <div className="glass rounded-xl p-4">
-              <BlockchainVisualization
-                chain={chain}
-                onTamper={tamperBlock}
-                onRemine={remineBlock}
-                isMining={isMining}
-              />
-            </div>
-          </section>
-
-          {/* Control Panels */}
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Main Content */}
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+          {/* Blockchain Visualization - Full Width */}
+          <div className="xl:col-span-4">
+            <BlockchainVisualization
+              blocks={blocks}
+              onTamper={handleTamper}
+              onRemine={handleRemine}
+              isMining={miningState.isMining}
+            />
+          </div>
+          
+          {/* Left Panel - Transactions */}
+          <div className="xl:col-span-2">
             <TransactionPanel
-              mempool={mempool}
-              onAddTransaction={addTransaction}
+              pendingTransactions={pendingTransactions}
+              onAddTransaction={handleAddTransaction}
+              onRemoveTransaction={removeTransaction}
             />
+          </div>
+          
+          {/* Middle Panel - Mining */}
+          <div className="xl:col-span-1">
             <MiningPanel
+              miningState={miningState}
               difficulty={difficulty}
+              pendingTransactionsCount={pendingTransactions.length}
+              onMine={handleMine}
+              onCancel={cancelMining}
               onDifficultyChange={setDifficulty}
-              isMining={isMining}
-              miningProgress={miningProgress}
-              mempoolSize={mempool.length}
-              onMine={mine}
-              onStopMining={stopMining}
             />
-            <ExplanationPanel event={lastEvent} />
-          </section>
-        </main>
+          </div>
+          
+          {/* Right Panel - Explanation */}
+          <div className="xl:col-span-1">
+            <ExplanationPanel
+              blocks={blocks}
+              miningState={miningState}
+              lastAction={lastAction}
+            />
+          </div>
+        </div>
+        
+        {/* Footer */}
+        <footer className="text-center text-xs text-muted-foreground py-4">
+          <p>
+            Built for educational purposes • Not a real cryptocurrency •{' '}
+            <span className="text-primary">SHA-256</span> hashing with{' '}
+            <span className="text-accent">Proof-of-Work</span>
+          </p>
+        </footer>
       </div>
-    </TooltipProvider>
+      
+      {/* Tamper Dialog */}
+      <TamperDialog
+        block={tamperTarget}
+        isOpen={!!tamperTarget}
+        onClose={() => setTamperTarget(null)}
+        onConfirm={handleTamperConfirm}
+      />
+    </div>
   );
 };
 
