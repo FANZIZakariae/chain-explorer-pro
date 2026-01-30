@@ -59,7 +59,7 @@ You can run this project locally using `npm` or `bun`.
 
 ### 1. Clone the repository
 ```bash
-git clone [https://github.com/your-username/blockchain-simulator.git](https://github.com/your-username/blockchain-simulator.git)
+git clone https://github.com/FANZIZakariae/chain-explorer-pro.git
 cd blockchain-simulator
 ```
 ### 2. Install dependencies
